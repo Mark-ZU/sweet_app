@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="columns is-desktop">
+    <div id="my_dataviz" class="column is-three-fifths-desktop">
+    </div>
+    <div class="column">
+        <!-- <div id="handle_bar" class="div_with_border"></div> -->
+        <div id="sheet" class="div_with_border field is-grouped is-grouped-multiline">
+            {%for id,g in data.guests.items()%}
+                <div class="block my_guest tags has-addons" draggable="true" guest_id="{{g.id}}">
+                    <span class="tag {{'is-success' if g.arranged else 'is-warning'}}" >{{g.name}}
+                    </span>
+                    <span class="tag {{'is-success' if g.arranged else ''}}">{{ g.table if g.arranged else '' }}</span>
+                </div>
+            {%endfor%}
+        </div>
+    </div>
+</div>
+<script src="https://d3js.org/d3.v4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-color@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-dispatch@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-ease@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-interpolate@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-selection@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-timer@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-transition@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-drag@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-zoom@3"></script>
+<script>
+    $( document ).ready(function(){
+        const __r = 0.8 // default ratio for 
+        // append the svg object to the body of the page
+        const svg = d3.select("#my_dataviz")
+            .append("svg").attr('viewBox',[0,0,600/__r,370/__r]).attr("class","div_with_border")
+        const g = svg.append("g");
+        let transform;
+        let zoom = d3.zoom().on('zoom',function(e) {
+            d3.select('svg g')
+                .attr('transform', (transform = e.transform));
+        });
+
+        function initZoom() {
+            d3.select('svg')
+                .call(zoom).call(zoom.transform, d3.zoomIdentity);
+        }
+        initZoom();
+
+        var data_tables = {{ data.tables | safe }}
+        var data_guests = {{ data.guests | safe }}
+        var data_seats_pos = {{ data.seats_pos | safe }}
+        var dragging_item_length = 0;
+        var has_drop_item = false;
+        var selected_table = -1;
+
+        var drawTable = function(t){
+            var t_rec_p = 12
+            seats = data_seats_pos[t.id]
+            var g = d3.select('svg g').append('g').attr("transform", "translate("+t.x+","+t.y+")").attr('class',"my_table").attr('table_id',t.id)
+            g.append("rect").attr('x',-t.r-t_rec_p).attr('y',-t.r-t_rec_p).attr("width",t.r*2+t_rec_p*2).attr("height",t.r*2+t_rec_p*2)
+                .attr('stroke',"#00000000").attr('stroke-width',"3").attr("fill","#00000000")
+            g.append('circle').attr('cx',0).attr('cy',0).attr('r',t.r).attr('stroke','black').attr('fill','#69a3b2');
+            g.append("text").attr('x',0).attr('y',-15)
+                .attr("dominant-baseline","middle").attr("text-anchor","middle").style("font-size", 30).attr('v','id')
+                .text(t.id);
+            g.append("text").attr('x',0).attr('y',15)
+                .attr("dominant-baseline","middle").attr("text-anchor","middle").style("font-size", 20).attr('v','contain')
+                .text(t.contain+"/"+t.capa);
+            
+            for(var i=0;i<seats.length;i++){
+                let d = seats[i];
+                let num = t.seats_arr[i]
+                let c = num!=-1 ? "#dcd545" : "#50e060aa";
+                gg = g.append('g').attr("transform", "translate("+d[0]+","+d[1]+")").attr('class',"my_seat").attr('table_id',t.id).attr('seat_id',i)
+                gg.append('circle').attr('r', 10).attr('stroke', 'grey').attr('fill', c).attr('seat_id',i);
+                gg.append('text').attr("dominant-baseline","middle").attr('seat_id',i).attr("text-anchor","middle").style("font-size", 5).text(num==-1 ? "" : data_guests[num].name)
+            }
+        }
+        function redrawTableContain(t_id){
+            var t = data_tables[t_id]
+            var e = document.querySelector('.my_table[table_id="'+t_id+'"]').querySelector('text[v="contain"]')
+            e.innerHTML = t.contain+"/"+t.capa
+            // t.setAttribute("capa",data_tables[tt])
+        }
+        function redrawSeat(t_id,s_id){
+            var s = data_tables[t_id].seats_arr[s_id]
+            var e = document.querySelector('.my_seat[table_id="'+t_id+'"][seat_id="'+s_id+'"]')
+            e.querySelector('text').innerHTML = s!=-1 ? data_guests[s].name : ""
+            e.querySelector('circle').setAttribute("fill",s!=-1 ? "#dcd545" : "#50e060aa")
+        }
+        function redrawGuest(id){
+            var g = data_guests[id]
+            var e = document.querySelector('.my_guest[guest_id="'+id+'"]')
+            var n = e.querySelectorAll('span')[0]
+            var t = e.querySelectorAll('span')[1]
+            if (g.arranged){
+                n.classList.remove('is-warning')
+                n.classList.add('is-success')
+                t.classList.add('is-success')
+                t.innerHTML = g.table
+            }else{
+                n.classList.remove('is-success')
+                n.classList.add('is-warning')
+                t.classList.remove('is-success')
+                t.innerHTML = ""
+            }
+            
+            // e.childNodes[1].innerHTML
+        }
+        function draw(){
+            for(var t in data_tables){
+                drawTable(data_tables[t])
+            }
+        }
+        draw()
+
+        function doAJAX(type,data,cb,err_cb){
+            $.ajax({
+                type : 'POST',
+                url : {{ url_for('.send')|tojson|safe }},
+                data : {'data':JSON.stringify({'type':type,"data":data})},
+                success:function(response){
+                    if (response.status){
+                        data_tables = response.data.tables
+                        data_guests = response.data.guests
+                        cb(response.changed)
+                    }else{
+                        console.log(response)
+                        console.log(typeof(err_cb))
+                        if (typeof(err_cb) !== 'undefined'){
+                            err_cb(response.changed)
+                        }
+                    }
+                },
+                error: function(error){
+                    console.log(error)
+                }
+            });
+        }
+        function changed_cb(changed){
+            changed.c.forEach(function(d){
+                redrawTableContain(d)
+            })
+            changed.t.forEach(function(d){
+                redrawSeat(d[0],d[1])
+            })
+            changed.g.forEach(function(d){
+                redrawGuest(d)
+            })
+        }
+        function handleDragStart(e){
+            var ids = new Array();
+            if(this.classList.contains('my_select')){
+                let items = document.querySelectorAll('.my_guest.my_select');
+                items.forEach(function(item){
+                    item.style.opacity='0.5';
+                    ids.push(item.getAttribute('guest_id'));
+                })
+            }
+            else{
+                ids.push(this.getAttribute("guest_id"));
+                this.style.opacity='0.5'
+            }
+            e.dataTransfer.setData("array/id",ids);
+            dragging_item_length = ids.length;
+        }
+        function handleDragEnd(e) {
+            this.style.opacity = '1';
+            let items = document.querySelectorAll('.my_guest.my_select');
+            items.forEach(function(item){
+                item.style.opacity='1';
+            })
+            if(has_drop_item && this.classList.contains('my_select')){
+                $('.my_select').removeClass('my_select')
+                has_drop_item = false;
+            }
+            dragging_item_length =0
+        }
+        function handleDragOver(e) {
+            if(e.preventDefault){
+                e.preventDefault();
+            }
+            e.dataTransfer.dropEffect = "move";
+            return false;
+        }
+        function handleDragEnter(e){
+            var data = dragging_item_length;
+            if (data !=0){
+                var table_id = parseInt(this.parentElement.getAttribute("table_id"))
+                var c = data_tables[table_id]['capa']-data_tables[table_id]['contain'] >= data ? "#50e060" : "#ff0000";
+                this.setAttribute("fill",c)
+            }
+        }
+        function handleDragLeave(e){
+            this.setAttribute("fill","#69a3b2")
+        }
+        function handleDrop(e){
+            has_drop_item = true;
+            e.stopPropagation();
+            var datas = e.dataTransfer.getData("array/id").split(',').map(item => parseInt(item,10));
+            var table = parseInt(this.getAttribute('table_id'));
+            doAJAX("change",{"guests":datas,"table_id":table},changed_cb);
+            this.querySelector('circle').setAttribute("fill","#69a3b2")
+            return false;
+        }
+        function handleClick(e){
+            if(selected_table==-1){
+                if(this.classList.contains('my_select')){
+                    this.classList.remove('my_select')
+                }
+                else{
+                    this.classList.add('my_select');
+                }
+            }else{
+                var id = parseInt(this.getAttribute('guest_id'))
+                if(this.classList.contains('table_select')){
+                    this.classList.remove('table_select')
+                    doAJAX("change",{"guests":[id],"table_id":-1},changed_cb,function(c){
+                        this.classList.add('table_select')
+                    });
+                }
+                else{
+                    this.classList.add('table_select');
+                    var g = this
+                    doAJAX("change",{"guests":[id],"table_id":selected_table},changed_cb,function(c){
+                        console.log("in error cb")
+                        g.classList.remove('table_select')
+                    });
+                }
+            }
+        }
+        function checkTableSelect(table_id){
+            $(".table_select").removeClass("table_select")
+            if(table_id != -1){
+                var seats = data_tables[table_id].seats_arr;
+                seats.forEach(function(id){
+                    if(id!=-1){
+                        document.querySelector('.my_guest[guest_id="'+id+'"]').classList.add('table_select')
+                    }
+                })
+            }
+        }
+        function handleTableClick(e){
+            if(selected_table == parseInt(this.getAttribute('table_id'))){
+                selected_table = -1
+                this.querySelector('rect').setAttribute('stroke',"#00000000")
+            }else if(selected_table == -1){
+                selected_table = parseInt(this.getAttribute('table_id'))
+                this.querySelector('rect').setAttribute('stroke',"#f05050")
+            }else{
+                document.querySelector('.my_table[table_id="'+selected_table+'"]').querySelector('rect').setAttribute('stroke',"#00000000")
+                selected_table = parseInt(this.getAttribute('table_id'))
+                selected_table = parseInt(this.getAttribute('table_id'))
+                this.querySelector('rect').setAttribute('stroke',"#f05050")
+            }
+            checkTableSelect(selected_table)
+        }
+
+        let items = document.querySelectorAll('.my_guest');
+        items.forEach(function(item){
+            item.addEventListener('dragstart', handleDragStart);
+            item.addEventListener('dragend', handleDragEnd);
+            item.addEventListener('click',handleClick);
+        })
+        var receiver = document.querySelectorAll('.my_table');
+        receiver.forEach(function(item){
+            var circle = item.querySelector('circle')
+            circle.addEventListener('dragover',handleDragOver);
+            circle.addEventListener('dragenter',handleDragEnter);
+            circle.addEventListener('dragleave',handleDragLeave);
+            item.addEventListener('drop',handleDrop);
+            item.addEventListener('click',handleTableClick);
+        })
+    });
+
+</script>
+{% endblock %}
